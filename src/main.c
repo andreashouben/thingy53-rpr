@@ -8,11 +8,58 @@
  *  @brief Nordic mesh light sample
  */
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/mesh.h>
+#include <zephyr/kernel.h>
 #include <bluetooth/mesh/models.h>
 #include <bluetooth/mesh/dk_prov.h>
 #include <dk_buttons_and_leds.h>
 #include "model_handler.h"
 #include "smp_bt.h"
+
+/* Hold SW1 for this long to trigger a factory reset */
+#define FACTORY_RESET_HOLD_MS 4000
+#define FACTORY_RESET_BLINK_MS 200
+
+static struct k_work_delayable factory_reset_work;
+static struct k_work_delayable factory_reset_blink_work;
+static int factory_reset_blink_count;
+
+static void factory_reset_blink_handler(struct k_work *work)
+{
+	factory_reset_blink_count--;
+	dk_set_leds(factory_reset_blink_count & 1 ? DK_ALL_LEDS_MSK : DK_NO_LEDS_MSK);
+	if (factory_reset_blink_count > 0) {
+		k_work_reschedule(&factory_reset_blink_work, K_MSEC(FACTORY_RESET_BLINK_MS));
+	} else {
+		dk_set_leds(DK_NO_LEDS_MSK);
+		bt_mesh_reset();
+		printk("Factory reset!\n");
+	}
+}
+
+static void factory_reset_handler(struct k_work *work)
+{
+	/* Blink 3 times (6 toggles) to confirm, then reset */
+	factory_reset_blink_count = 6;
+	k_work_reschedule(&factory_reset_blink_work, K_NO_WAIT);
+}
+
+static void button_handler_cb(uint32_t button_state, uint32_t has_changed)
+{
+	if (!(has_changed & BIT(0))) {
+		return;
+	}
+
+	if (button_state & BIT(0)) {
+		/* Button pressed: slow blink while held, start countdown */
+		dk_set_leds(DK_ALL_LEDS_MSK);
+		k_work_reschedule(&factory_reset_work, K_MSEC(FACTORY_RESET_HOLD_MS));
+	} else {
+		/* Button released before timeout: cancel */
+		k_work_cancel_delayable(&factory_reset_work);
+		dk_set_leds(DK_NO_LEDS_MSK);
+	}
+}
 
 static void bt_ready(int err)
 {
@@ -29,7 +76,10 @@ static void bt_ready(int err)
 		return;
 	}
 
-	err = dk_buttons_init(NULL);
+	k_work_init_delayable(&factory_reset_work, factory_reset_handler);
+	k_work_init_delayable(&factory_reset_blink_work, factory_reset_blink_handler);
+
+	err = dk_buttons_init(button_handler_cb);
 	if (err) {
 		printk("Initializing buttons failed (err %d)\n", err);
 		return;
