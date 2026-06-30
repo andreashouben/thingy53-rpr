@@ -51,13 +51,14 @@ static void button_handler_cb(uint32_t button_state, uint32_t has_changed)
 	}
 
 	if (button_state & BIT(0)) {
-		/* Button pressed: slow blink while held, start countdown */
-		dk_set_leds(DK_ALL_LEDS_MSK);
+		/* Button pressed: start factory reset countdown */
 		k_work_reschedule(&factory_reset_work, K_MSEC(FACTORY_RESET_HOLD_MS));
 	} else {
-		/* Button released before timeout: cancel */
-		k_work_cancel_delayable(&factory_reset_work);
-		dk_set_leds(DK_NO_LEDS_MSK);
+		/* Button released: if countdown still pending it was a short press */
+		if (k_work_delayable_is_pending(&factory_reset_work)) {
+			k_work_cancel_delayable(&factory_reset_work);
+			model_handler_led_toggle();
+		}
 	}
 }
 
@@ -112,7 +113,8 @@ int main(void)
 {
 	int err;
 
-	printk("Initializing...\n");
+	printk("Initializing... (built " __DATE__ " " __TIME__ ")\n");
+	bt_set_name("RPR Thingy 1 (Build " __DATE__ " " __TIME__ ")");
 
 	err = bt_enable(bt_ready);
 	if (err) {

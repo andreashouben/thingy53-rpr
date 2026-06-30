@@ -19,6 +19,7 @@ extern "C" {
 #endif
 
 const struct bt_mesh_comp *model_handler_init(void);
+void model_handler_led_toggle(void);
 
 #ifdef __cplusplus
 }
